@@ -12,7 +12,9 @@ import {
   getProjects,
   getConversation,
   getConversationStream,
+  getSessionTokens,
   invalidateHistoryCache,
+  invalidateTokenCache,
   addToFileIndex,
 } from "./storage";
 import {
@@ -147,6 +149,12 @@ export function createServer(options: ServerOptions) {
     return c.json(messages);
   });
 
+  app.get("/api/sessions/:id/tokens", async (c) => {
+    const sessionId = c.req.param("id");
+    const tokens = await getSessionTokens(sessionId);
+    return tokens ? c.json(tokens) : c.json(null, 404);
+  });
+
   app.get("/api/conversation/:id/stream", async (c) => {
     const sessionId = c.req.param("id");
     const offsetParam = c.req.query("offset");
@@ -231,6 +239,7 @@ export function createServer(options: ServerOptions) {
 
   onSessionChange((sessionId: string, filePath: string) => {
     addToFileIndex(sessionId, filePath);
+    invalidateTokenCache(sessionId);
   });
 
   startWatcher();

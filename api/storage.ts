@@ -52,6 +52,13 @@ export interface TokenUsage {
   cache_read_input_tokens?: number;
 }
 
+export interface SessionTokens {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+}
+
 export interface StreamResult {
   messages: ConversationMessage[];
   nextOffset: number;
@@ -62,6 +69,7 @@ let projectsDir = join(claudeDir, "projects");
 const fileIndex = new Map<string, string>();
 let historyCache: HistoryEntry[] | null = null;
 const pendingRequests = new Map<string, Promise<unknown>>();
+const tokenCache = new Map<string, { tokens: SessionTokens; size: number; mtime: number }>();
 
 export function initStorage(dir?: string): void {
   claudeDir = dir ?? join(homedir(), ".claude");
@@ -74,6 +82,14 @@ export function getClaudeDir(): string {
 
 export function invalidateHistoryCache(): void {
   historyCache = null;
+}
+
+export function invalidateTokenCache(sessionId?: string): void {
+  if (sessionId) {
+    tokenCache.delete(sessionId);
+  } else {
+    tokenCache.clear();
+  }
 }
 
 export function addToFileIndex(sessionId: string, filePath: string): void {
@@ -376,4 +392,78 @@ export async function getConversationStream(
       await fileHandle.close();
     }
   }
+}
+
+export async function getSessionTokens(
+  sessionId: string
+): Promise<SessionTokens | null> {
+  return dedupe(`getSessionTokens:${sessionId}`, async () => {
+    const filePath = await findSessionFile(sessionId);
+
+    if (!filePath) {
+      return null;
+    }
+
+    let fileHandle;
+    try {
+      const fileStat = await stat(filePath);
+      const fileSize = fileStat.size;
+      const mtime = fileStat.mtimeMs;
+
+      const cached = tokenCache.get(sessionId);
+      if (cached && cached.size === fileSize && cached.mtime === mtime) {
+        return cached.tokens;
+      }
+
+      fileHandle = await open(filePath, "r");
+      const stream = fileHandle.createReadStream({
+        encoding: "utf-8",
+      });
+
+      const rl = createInterface({
+        input: stream,
+        crlfDelay: Infinity,
+      });
+
+      // Track last message's usage (represents current context size)
+      // and sum output tokens across all messages
+      let lastUsage: { input: number; cacheCreation: number; cacheRead: number } | null = null;
+      let totalOutputTokens = 0;
+
+      for await (const line of rl) {
+        if (!line.trim()) continue;
+        try {
+          const msg = JSON.parse(line);
+          const usage = msg?.message?.usage;
+          if (usage) {
+            lastUsage = {
+              input: usage.input_tokens || 0,
+              cacheCreation: usage.cache_creation_input_tokens || 0,
+              cacheRead: usage.cache_read_input_tokens || 0,
+            };
+            totalOutputTokens += usage.output_tokens || 0;
+          }
+        } catch {
+          // Skip malformed lines
+        }
+      }
+
+      // Current context = last message's total input (non-cached + cache creation + cache read)
+      const tokens: SessionTokens = {
+        inputTokens: lastUsage ? lastUsage.input + lastUsage.cacheCreation + lastUsage.cacheRead : 0,
+        outputTokens: totalOutputTokens,
+        cacheCreationTokens: lastUsage?.cacheCreation || 0,
+        cacheReadTokens: lastUsage?.cacheRead || 0,
+      };
+
+      tokenCache.set(sessionId, { tokens, size: fileSize, mtime });
+      return tokens;
+    } catch {
+      return null;
+    } finally {
+      if (fileHandle) {
+        await fileHandle.close();
+      }
+    }
+  });
 }
