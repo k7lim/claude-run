@@ -1,17 +1,19 @@
-import { useState, useMemo, memo, useRef } from "react";
+import { useState, useMemo, memo, useRef, useEffect } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import type { Session } from "@claude-run/api";
-import { formatTime } from "../utils";
+import type { Session, SessionTokens } from "@claude-run/api";
+import { formatTime, formatTokens } from "../utils";
 
 interface SessionListProps {
   sessions: Session[];
   selectedSession: string | null;
   onSelectSession: (sessionId: string) => void;
   loading?: boolean;
+  tokens?: Record<string, SessionTokens>;
+  onVisibleSessionsChange?: (ids: string[]) => void;
 }
 
 const SessionList = memo(function SessionList(props: SessionListProps) {
-  const { sessions, selectedSession, onSelectSession, loading } = props;
+  const { sessions, selectedSession, onSelectSession, loading, tokens, onVisibleSessionsChange } = props;
   const [search, setSearch] = useState("");
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -34,6 +36,15 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
     overscan: 10,
     measureElement: (element) => element.getBoundingClientRect().height,
   });
+
+  const virtualItems = virtualizer.getVirtualItems();
+
+  useEffect(() => {
+    if (onVisibleSessionsChange && virtualItems.length > 0) {
+      const visibleIds = virtualItems.map((item) => filteredSessions[item.index]?.id).filter(Boolean);
+      onVisibleSessionsChange(visibleIds);
+    }
+  }, [virtualItems, filteredSessions, onVisibleSessionsChange]);
 
   return (
     <div className="h-full overflow-hidden bg-zinc-950 flex flex-col">
@@ -117,8 +128,11 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
               position: "relative",
             }}
           >
-            {virtualizer.getVirtualItems().map((virtualItem) => {
+            {virtualItems.map((virtualItem) => {
               const session = filteredSessions[virtualItem.index];
+              const sessionTokenData = tokens?.[session.id];
+              // inputTokens now represents the current context size
+              const contextSize = sessionTokenData?.inputTokens || null;
               return (
                 <button
                   key={session.id}
@@ -144,6 +158,7 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
                     </span>
                     <span className="text-[10px] text-zinc-600">
                       {formatTime(session.timestamp)}
+                      {contextSize !== null && ` · ${formatTokens(contextSize)}`}
                     </span>
                   </div>
                   <p className="text-[12px] text-zinc-300 leading-snug line-clamp-2 break-words">

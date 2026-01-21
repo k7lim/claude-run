@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import type { Session } from "@claude-run/api";
+import type { Session, SessionTokens } from "@claude-run/api";
 import { PanelLeft, Copy, Check } from "lucide-react";
 import { formatTime } from "./utils";
 import SessionList from "./components/session-list";
@@ -57,6 +57,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [sessionTokens, setSessionTokens] = useState<Record<string, SessionTokens>>({});
 
   const handleCopyResumeCommand = useCallback(
     (sessionId: string, projectPath: string) => {
@@ -126,6 +127,22 @@ function App() {
     setSelectedSession(sessionId);
   }, []);
 
+  const handleVisibleSessionsChange = useCallback((visibleIds: string[]) => {
+    const idsToFetch = visibleIds.filter((id) => !(id in sessionTokens));
+    if (idsToFetch.length === 0) return;
+
+    for (const id of idsToFetch) {
+      fetch(`/api/sessions/${id}/tokens`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((tokens) => {
+          if (tokens) {
+            setSessionTokens((prev) => ({ ...prev, [id]: tokens }));
+          }
+        })
+        .catch(() => {});
+    }
+  }, [sessionTokens]);
+
   return (
     <div className="flex h-screen bg-zinc-950 text-zinc-100">
       {!sidebarCollapsed && (
@@ -155,6 +172,8 @@ function App() {
             selectedSession={selectedSession}
             onSelectSession={handleSelectSession}
             loading={loading}
+            tokens={sessionTokens}
+            onVisibleSessionsChange={handleVisibleSessionsChange}
           />
         </aside>
       )}
