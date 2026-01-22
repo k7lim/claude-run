@@ -68,6 +68,8 @@ let claudeDir = join(homedir(), ".claude");
 let projectsDir = join(claudeDir, "projects");
 const fileIndex = new Map<string, string>();
 let historyCache: HistoryEntry[] | null = null;
+let historyCacheTime = 0;
+const HISTORY_CACHE_TTL_MS = 5000;
 const pendingRequests = new Map<string, Promise<unknown>>();
 const tokenCache = new Map<string, { tokens: SessionTokens; size: number; mtime: number }>();
 
@@ -82,6 +84,7 @@ export function getClaudeDir(): string {
 
 export function invalidateHistoryCache(): void {
   historyCache = null;
+  historyCacheTime = 0;
 }
 
 export function invalidateTokenCache(sessionId?: string): void {
@@ -147,9 +150,11 @@ async function loadHistoryCache(): Promise<HistoryEntry[]> {
     }
 
     historyCache = entries;
+    historyCacheTime = Date.now();
     return entries;
   } catch {
     historyCache = [];
+    historyCacheTime = Date.now();
     return [];
   }
 }
@@ -248,9 +253,13 @@ export async function loadStorage(): Promise<void> {
   await Promise.all([buildFileIndex(), loadHistoryCache()]);
 }
 
+function isHistoryCacheStale(): boolean {
+  return !historyCache || (Date.now() - historyCacheTime > HISTORY_CACHE_TTL_MS);
+}
+
 export async function getSessions(): Promise<Session[]> {
   return dedupe("getSessions", async () => {
-    const entries = historyCache ?? (await loadHistoryCache());
+    const entries = isHistoryCacheStale() ? await loadHistoryCache() : historyCache!;
     const sessions: Session[] = [];
     const seenIds = new Set<string>();
 
@@ -280,7 +289,7 @@ export async function getSessions(): Promise<Session[]> {
 }
 
 export async function getProjects(): Promise<string[]> {
-  const entries = historyCache ?? (await loadHistoryCache());
+  const entries = isHistoryCacheStale() ? await loadHistoryCache() : historyCache!;
   const projects = new Set<string>();
 
   for (const entry of entries) {
