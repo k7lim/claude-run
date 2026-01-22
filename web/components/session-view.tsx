@@ -10,10 +10,11 @@ const SCROLL_THRESHOLD_PX = 100;
 
 interface SessionViewProps {
   sessionId: string;
+  onMessagesChange?: (messages: ConversationMessage[]) => void;
 }
 
 function SessionView(props: SessionViewProps) {
-  const { sessionId } = props;
+  const { sessionId, onMessagesChange } = props;
 
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [loading, setLoading] = useState(true);
@@ -108,6 +109,10 @@ function SessionView(props: SessionViewProps) {
       scrollToBottom();
     }
   }, [messages, autoScroll, scrollToBottom]);
+
+  useEffect(() => {
+    onMessagesChange?.(messages);
+  }, [messages, onMessagesChange]);
 
   const handleScroll = () => {
     if (!containerRef.current || isScrollingProgrammaticallyRef.current) {
