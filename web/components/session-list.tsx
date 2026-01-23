@@ -7,6 +7,8 @@ interface SessionListProps {
   sessions: Session[];
   selectedSession: string | null;
   onSelectSession: (sessionId: string) => void;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (sessionId: string) => void;
   loading?: boolean;
   tokens?: Record<string, SessionTokens>;
   onVisibleSessionsChange?: (ids: string[]) => void;
@@ -15,7 +17,7 @@ interface SessionListProps {
 type SortBy = "last" | "first";
 
 const SessionList = memo(function SessionList(props: SessionListProps) {
-  const { sessions, selectedSession, onSelectSession, loading, tokens, onVisibleSessionsChange } = props;
+  const { sessions, selectedSession, onSelectSession, selectedIds, onToggleSelect, loading, tokens, onVisibleSessionsChange } = props;
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<SortBy>("last");
   const [searchResults, setSearchResults] = useState<SearchResult[] | null>(null);
@@ -233,14 +235,13 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
             {virtualItems.map((virtualItem) => {
               const session = filteredSessions[virtualItem.index];
               const sessionTokenData = tokens?.[session.id];
-              // inputTokens now represents the current context size
               const contextSize = sessionTokenData?.inputTokens || null;
+              const isChecked = selectedIds?.has(session.id) ?? false;
               return (
-                <button
+                <div
                   key={session.id}
                   data-index={virtualItem.index}
                   ref={virtualizer.measureElement}
-                  onClick={() => onSelectSession(session.id)}
                   style={{
                     position: "absolute",
                     top: 0,
@@ -248,32 +249,45 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
                     width: "100%",
                     transform: `translateY(${virtualItem.start}px)`,
                   }}
-                  className={`px-3 py-3.5 text-left transition-colors overflow-hidden border-b border-zinc-800/40 ${
+                  className={`flex items-start px-3 py-3.5 text-left transition-colors overflow-hidden border-b border-zinc-800/40 ${
                     selectedSession === session.id
                       ? "bg-cyan-700/30"
                       : "hover:bg-zinc-900/60"
                   } ${virtualItem.index === 0 ? "border-t border-t-zinc-800/40" : ""}`}
                 >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[10px] text-zinc-500 font-medium">
-                      {session.projectName}
-                    </span>
-                    <span className="text-[10px] text-zinc-600">
-                      {formatTime(session.timestamp)}
-                      {contextSize !== null && ` · ${formatTokens(contextSize)}`}
-                    </span>
-                  </div>
-                  <p className="text-[12px] text-zinc-300 leading-snug line-clamp-2 break-words">
-                    {session.display}
-                  </p>
-                  {session.firstTimestamp && (
-                    <div className="flex items-center gap-2 mt-1">
+                  {onToggleSelect && (
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={() => onToggleSelect(session.id)}
+                      className="mt-1 mr-2 accent-cyan-600 shrink-0 cursor-pointer"
+                    />
+                  )}
+                  <button
+                    onClick={() => onSelectSession(session.id)}
+                    className="flex-1 text-left min-w-0"
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] text-zinc-500 font-medium">
+                        {session.projectName}
+                      </span>
                       <span className="text-[10px] text-zinc-600">
-                        Created {formatTime(session.firstTimestamp)}
+                        {formatTime(session.timestamp)}
+                        {contextSize !== null && ` · ${formatTokens(contextSize)}`}
                       </span>
                     </div>
-                  )}
-                </button>
+                    <p className="text-[12px] text-zinc-300 leading-snug line-clamp-2 break-words">
+                      {session.display}
+                    </p>
+                    {session.firstTimestamp && (
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="text-[10px] text-zinc-600">
+                          Created {formatTime(session.firstTimestamp)}
+                        </span>
+                      </div>
+                    )}
+                  </button>
+                </div>
               );
             })}
           </div>

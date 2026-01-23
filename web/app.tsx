@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import type { Session, SessionTokens, ConversationMessage } from "@claude-run/api";
-import { PanelLeft, Copy, Check, FileText, Archive, ArchiveRestore } from "lucide-react";
+import { PanelLeft, Copy, Check, FileText, Archive, ArchiveRestore, Download, ChevronDown } from "lucide-react";
 import { formatTime } from "./utils";
 import { conversationToMarkdown } from "./utils/conversation-to-markdown";
 import SessionList from "./components/session-list";
@@ -14,10 +14,24 @@ interface SessionHeaderProps {
   onCopyResumeCommand: (sessionId: string, projectPath: string) => void;
   onCopyMarkdown: () => void;
   onArchiveToggle: (sessionId: string, archived: boolean) => void;
+  onEnterBatchMode: () => void;
 }
 
 function SessionHeader(props: SessionHeaderProps) {
-  const { session, copied, markdownCopied, onCopyResumeCommand, onCopyMarkdown, onArchiveToggle } = props;
+  const { session, copied, markdownCopied, onCopyResumeCommand, onCopyMarkdown, onArchiveToggle, onEnterBatchMode } = props;
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!dropdownOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [dropdownOpen]);
 
   return (
     <>
@@ -32,23 +46,49 @@ function SessionHeader(props: SessionHeaderProps) {
           {formatTime(session.timestamp)}
         </span>
       </div>
-      <button
-        onClick={onCopyMarkdown}
-        className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-zinc-300 bg-zinc-800 hover:bg-zinc-700 rounded transition-colors cursor-pointer shrink-0"
-        title="Copy conversation as markdown"
-      >
-        {markdownCopied ? (
-          <>
-            <Check className="w-3.5 h-3.5 text-green-500" />
-            <span className="text-green-500">Copied!</span>
-          </>
-        ) : (
-          <>
-            <FileText className="w-3.5 h-3.5" />
-            <span>Copy Markdown</span>
-          </>
+      <div className="relative shrink-0" ref={dropdownRef}>
+        <div className="flex items-center rounded bg-zinc-800">
+          <button
+            onClick={onCopyMarkdown}
+            className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 rounded-l transition-colors cursor-pointer"
+            title="Copy conversation as markdown"
+          >
+            {markdownCopied ? (
+              <>
+                <Check className="w-3.5 h-3.5 text-green-500" />
+                <span className="text-green-500">Copied!</span>
+              </>
+            ) : (
+              <>
+                <FileText className="w-3.5 h-3.5" />
+                <span>Copy Markdown</span>
+              </>
+            )}
+          </button>
+          <div className="w-px h-5 bg-zinc-700" />
+          <button
+            onClick={() => setDropdownOpen(!dropdownOpen)}
+            className="flex items-center px-1.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 rounded-r transition-colors cursor-pointer"
+            title="More export options"
+          >
+            <ChevronDown className="w-3.5 h-3.5" />
+          </button>
+        </div>
+        {dropdownOpen && (
+          <div className="absolute right-0 top-full mt-1 bg-zinc-800 border border-zinc-700 rounded shadow-lg z-50">
+            <button
+              onClick={() => {
+                setDropdownOpen(false);
+                onEnterBatchMode();
+              }}
+              className="flex items-center gap-2 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-700 whitespace-nowrap w-full text-left cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Batch export...
+            </button>
+          </div>
         )}
-      </button>
+      </div>
       <button
         onClick={() => onArchiveToggle(session.id, !session.archived)}
         className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-zinc-300 bg-zinc-800 hover:bg-zinc-700 rounded transition-colors cursor-pointer shrink-0"
@@ -99,6 +139,9 @@ function App() {
   const [sessionTokens, setSessionTokens] = useState<Record<string, SessionTokens>>({});
   const currentMessagesRef = useRef<ConversationMessage[]>([]);
   const [showArchived, setShowArchived] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [batchMode, setBatchMode] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const handleCopyResumeCommand = useCallback(
     (sessionId: string, projectPath: string) => {
@@ -121,6 +164,49 @@ function App() {
 
   const handleMessagesChange = useCallback((messages: ConversationMessage[]) => {
     currentMessagesRef.current = messages;
+  }, []);
+
+  const handleToggleSelect = useCallback((sessionId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(sessionId)) {
+        next.delete(sessionId);
+      } else {
+        next.add(sessionId);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleBatchExport = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    setExporting(true);
+    try {
+      const parts: string[] = [];
+      for (const id of selectedIds) {
+        const res = await fetch(`/api/conversation/${id}`);
+        const messages: ConversationMessage[] = await res.json();
+        const session = sessions.find((s) => s.id === id);
+        const title = session?.display || id;
+        parts.push(conversationToMarkdown(messages, title));
+      }
+      const blob = new Blob([parts.join("\n---\n\n")], { type: "text/markdown" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `claude-sessions-${new Date().toISOString().slice(0, 10)}.md`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setSelectedIds(new Set());
+      setBatchMode(false);
+    } finally {
+      setExporting(false);
+    }
+  }, [selectedIds, sessions]);
+
+  const handleCancelBatchMode = useCallback(() => {
+    setBatchMode(false);
+    setSelectedIds(new Set());
   }, []);
 
   const selectedSessionData = useMemo(() => {
@@ -248,10 +334,32 @@ function App() {
             sessions={filteredSessions}
             selectedSession={selectedSession}
             onSelectSession={handleSelectSession}
+            selectedIds={batchMode ? selectedIds : undefined}
+            onToggleSelect={batchMode ? handleToggleSelect : undefined}
             loading={loading}
             tokens={sessionTokens}
             onVisibleSessionsChange={handleVisibleSessionsChange}
           />
+          {batchMode && (
+            <div className="px-3 py-2 border-t border-zinc-800/60 flex items-center gap-2">
+              <button
+                onClick={handleBatchExport}
+                disabled={exporting || selectedIds.size === 0}
+                className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-xs text-zinc-200 bg-cyan-700/60 hover:bg-cyan-700/80 rounded transition-colors disabled:opacity-50"
+              >
+                <Download className="w-3.5 h-3.5" />
+                {exporting
+                  ? "Exporting..."
+                  : `Export ${selectedIds.size} session${selectedIds.size !== 1 ? "s" : ""}`}
+              </button>
+              <button
+                onClick={handleCancelBatchMode}
+                className="px-2 py-2 text-xs text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
         </aside>
       )}
 
@@ -274,6 +382,7 @@ function App() {
               onCopyResumeCommand={handleCopyResumeCommand}
               onCopyMarkdown={handleCopyMarkdown}
               onArchiveToggle={handleArchiveToggle}
+              onEnterBatchMode={() => setBatchMode(true)}
             />
           )}
         </div>
