@@ -12,27 +12,34 @@ interface SessionListProps {
   onVisibleSessionsChange?: (ids: string[]) => void;
 }
 
+type SortBy = "last" | "first";
+
 const SessionList = memo(function SessionList(props: SessionListProps) {
   const { sessions, selectedSession, onSelectSession, loading, tokens, onVisibleSessionsChange } = props;
   const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState<SortBy>("last");
   const parentRef = useRef<HTMLDivElement>(null);
 
   const filteredSessions = useMemo(() => {
-    if (!search.trim()) {
-      return sessions;
+    let result = sessions;
+    if (search.trim()) {
+      const query = search.toLowerCase();
+      result = sessions.filter(
+        (s) =>
+          s.display.toLowerCase().includes(query) ||
+          s.projectName.toLowerCase().includes(query)
+      );
     }
-    const query = search.toLowerCase();
-    return sessions.filter(
-      (s) =>
-        s.display.toLowerCase().includes(query) ||
-        s.projectName.toLowerCase().includes(query)
-    );
-  }, [sessions, search]);
+    if (sortBy === "first") {
+      return [...result].sort((a, b) => (b.firstTimestamp ?? 0) - (a.firstTimestamp ?? 0));
+    }
+    return [...result].sort((a, b) => b.timestamp - a.timestamp);
+  }, [sessions, search, sortBy]);
 
   const virtualizer = useVirtualizer({
     count: filteredSessions.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 76,
+    estimateSize: () => 90,
     overscan: 10,
     measureElement: (element) => element.getBoundingClientRect().height,
   });
@@ -90,6 +97,29 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
               </svg>
             </button>
           )}
+        </div>
+        <div className="flex items-center gap-1 mt-2">
+          <span className="text-[10px] text-zinc-600 mr-1">Sort:</span>
+          <button
+            onClick={() => setSortBy("last")}
+            className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
+              sortBy === "last"
+                ? "bg-zinc-700 text-zinc-200"
+                : "text-zinc-500 hover:text-zinc-300"
+            }`}
+          >
+            Latest
+          </button>
+          <button
+            onClick={() => setSortBy("first")}
+            className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
+              sortBy === "first"
+                ? "bg-zinc-700 text-zinc-200"
+                : "text-zinc-500 hover:text-zinc-300"
+            }`}
+          >
+            Created
+          </button>
         </div>
       </div>
 
@@ -164,6 +194,13 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
                   <p className="text-[12px] text-zinc-300 leading-snug line-clamp-2 break-words">
                     {session.display}
                   </p>
+                  {session.firstTimestamp && (
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-[10px] text-zinc-600">
+                        Created {formatTime(session.firstTimestamp)}
+                      </span>
+                    </div>
+                  )}
                 </button>
               );
             })}
