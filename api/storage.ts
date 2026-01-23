@@ -65,6 +65,20 @@ export interface StreamResult {
   nextOffset: number;
 }
 
+export interface SearchMatch {
+  text: string;
+  role: "user" | "assistant";
+}
+
+export interface SearchResult {
+  sessionId: string;
+  display: string;
+  projectName: string;
+  project: string;
+  timestamp: number;
+  matches: SearchMatch[];
+}
+
 let claudeDir = join(homedir(), ".claude");
 let projectsDir = join(claudeDir, "projects");
 const fileIndex = new Map<string, string>();
@@ -465,8 +479,6 @@ export async function getSessionTokens(
         crlfDelay: Infinity,
       });
 
-      // Track last message's usage (represents current context size)
-      // and sum output tokens across all messages
       let lastUsage: { input: number; cacheCreation: number; cacheRead: number } | null = null;
       let totalOutputTokens = 0;
 
@@ -488,7 +500,6 @@ export async function getSessionTokens(
         }
       }
 
-      // Current context = last message's total input (non-cached + cache creation + cache read)
       const tokens: SessionTokens = {
         inputTokens: lastUsage ? lastUsage.input + lastUsage.cacheCreation + lastUsage.cacheRead : 0,
         outputTokens: totalOutputTokens,
@@ -506,4 +517,84 @@ export async function getSessionTokens(
       }
     }
   });
+}
+
+function extractTextContent(msg: ConversationMessage): string {
+  const content = msg.message?.content;
+  if (!content) return "";
+  if (typeof content === "string") return content;
+  return content
+    .filter((b) => b.type === "text" && b.text)
+    .map((b) => b.text!)
+    .join(" ");
+}
+
+function extractSnippet(text: string, query: string, maxLen: number = 120): string {
+  const lowerText = text.toLowerCase();
+  const lowerQuery = query.toLowerCase();
+  const idx = lowerText.indexOf(lowerQuery);
+  if (idx === -1) return text.slice(0, maxLen);
+  const start = Math.max(0, idx - 40);
+  const end = Math.min(text.length, idx + query.length + 80);
+  let snippet = text.slice(start, end);
+  if (start > 0) snippet = "..." + snippet;
+  if (end < text.length) snippet = snippet + "...";
+  return snippet;
+}
+
+export async function searchSessions(
+  query: string,
+  maxResults: number = 20
+): Promise<SearchResult[]> {
+  if (!query || query.length < 2) return [];
+
+  const sessions = await getSessions();
+  const sessionMap = new Map(sessions.map((s) => [s.id, s]));
+  const lowerQuery = query.toLowerCase();
+  const results: SearchResult[] = [];
+
+  for (const [sessionId, filePath] of fileIndex.entries()) {
+    if (results.length >= maxResults) break;
+
+    const session = sessionMap.get(sessionId);
+    if (!session) continue;
+
+    try {
+      const content = await readFile(filePath, "utf-8");
+      const lines = content.trim().split("\n").filter(Boolean);
+      const matches: SearchMatch[] = [];
+
+      for (const line of lines) {
+        if (matches.length >= 3) break;
+        try {
+          const msg: ConversationMessage = JSON.parse(line);
+          if (msg.type !== "user" && msg.type !== "assistant") continue;
+          const text = extractTextContent(msg);
+          if (text.toLowerCase().includes(lowerQuery)) {
+            matches.push({
+              text: extractSnippet(text, query),
+              role: msg.type,
+            });
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      if (matches.length > 0) {
+        results.push({
+          sessionId,
+          display: session.display,
+          projectName: session.projectName,
+          project: session.project,
+          timestamp: session.timestamp,
+          matches,
+        });
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return results.sort((a, b) => b.timestamp - a.timestamp);
 }

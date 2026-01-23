@@ -1,6 +1,6 @@
-import { useState, useMemo, memo, useRef, useEffect } from "react";
+import { useState, useMemo, memo, useRef, useEffect, useCallback } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import type { Session, SessionTokens } from "@claude-run/api";
+import type { Session, SessionTokens, SearchResult } from "@claude-run/api";
 import { formatTime, formatTokens } from "../utils";
 
 interface SessionListProps {
@@ -18,11 +18,40 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
   const { sessions, selectedSession, onSelectSession, loading, tokens, onVisibleSessionsChange } = props;
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<SortBy>("last");
+  const [searchResults, setSearchResults] = useState<SearchResult[] | null>(null);
+  const [searching, setSearching] = useState(false);
   const parentRef = useRef<HTMLDivElement>(null);
+  const debounceRef = useRef<NodeJS.Timeout | null>(null);
+
+  const doSearch = useCallback((query: string) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (query.length < 3) {
+      setSearchResults(null);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    debounceRef.current = setTimeout(() => {
+      fetch(`/api/search?q=${encodeURIComponent(query)}`)
+        .then((res) => res.json())
+        .then((data: SearchResult[]) => {
+          setSearchResults(data);
+          setSearching(false);
+        })
+        .catch(() => {
+          setSearchResults([]);
+          setSearching(false);
+        });
+    }, 300);
+  }, []);
+
+  useEffect(() => {
+    doSearch(search);
+  }, [search, doSearch]);
 
   const filteredSessions = useMemo(() => {
     let result = sessions;
-    if (search.trim()) {
+    if (search.trim() && search.length < 3) {
       const query = search.toLowerCase();
       result = sessions.filter(
         (s) =>
@@ -124,7 +153,7 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
       </div>
 
       <div ref={parentRef} className="flex-1 overflow-y-auto">
-        {loading ? (
+        {loading || searching ? (
           <div className="flex items-center justify-center py-8">
             <svg
               className="w-5 h-5 text-zinc-600 animate-spin"
@@ -146,6 +175,49 @@ const SessionList = memo(function SessionList(props: SessionListProps) {
               />
             </svg>
           </div>
+        ) : searchResults !== null ? (
+          searchResults.length === 0 ? (
+            <p className="py-8 text-center text-xs text-zinc-600">
+              No results found
+            </p>
+          ) : (
+            <div className="flex flex-col">
+              {searchResults.map((result) => (
+                <button
+                  key={result.sessionId}
+                  onClick={() => onSelectSession(result.sessionId)}
+                  className={`px-3 py-3 text-left transition-colors border-b border-zinc-800/40 ${
+                    selectedSession === result.sessionId
+                      ? "bg-cyan-700/30"
+                      : "hover:bg-zinc-900/60"
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] text-zinc-500 font-medium">
+                      {result.projectName}
+                    </span>
+                    <span className="text-[10px] text-zinc-600">
+                      {formatTime(result.timestamp)}
+                    </span>
+                  </div>
+                  <p className="text-[12px] text-zinc-300 leading-snug line-clamp-1 break-words mb-1">
+                    {result.display}
+                  </p>
+                  {result.matches.slice(0, 2).map((match, i) => (
+                    <p
+                      key={i}
+                      className="text-[11px] text-zinc-500 leading-snug line-clamp-2 break-words mt-0.5"
+                    >
+                      <span className="text-zinc-600 font-medium">
+                        {match.role === "user" ? "You" : "Claude"}:
+                      </span>{" "}
+                      {match.text}
+                    </p>
+                  ))}
+                </button>
+              ))}
+            </div>
+          )
         ) : filteredSessions.length === 0 ? (
           <p className="py-8 text-center text-xs text-zinc-600">
             {search ? "No sessions match" : "No sessions found"}
