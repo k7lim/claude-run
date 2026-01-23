@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import type { Session, SessionTokens, ConversationMessage } from "@claude-run/api";
-import { PanelLeft, Copy, Check, FileText } from "lucide-react";
+import { PanelLeft, Copy, Check, FileText, Archive, ArchiveRestore } from "lucide-react";
 import { formatTime } from "./utils";
 import { conversationToMarkdown } from "./utils/conversation-to-markdown";
 import SessionList from "./components/session-list";
@@ -13,10 +13,11 @@ interface SessionHeaderProps {
   markdownCopied: boolean;
   onCopyResumeCommand: (sessionId: string, projectPath: string) => void;
   onCopyMarkdown: () => void;
+  onArchiveToggle: (sessionId: string, archived: boolean) => void;
 }
 
 function SessionHeader(props: SessionHeaderProps) {
-  const { session, copied, markdownCopied, onCopyResumeCommand, onCopyMarkdown } = props;
+  const { session, copied, markdownCopied, onCopyResumeCommand, onCopyMarkdown, onArchiveToggle } = props;
 
   return (
     <>
@@ -45,6 +46,23 @@ function SessionHeader(props: SessionHeaderProps) {
           <>
             <FileText className="w-3.5 h-3.5" />
             <span>Copy Markdown</span>
+          </>
+        )}
+      </button>
+      <button
+        onClick={() => onArchiveToggle(session.id, !session.archived)}
+        className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-zinc-300 bg-zinc-800 hover:bg-zinc-700 rounded transition-colors cursor-pointer shrink-0"
+        title={session.archived ? "Unarchive session" : "Archive session"}
+      >
+        {session.archived ? (
+          <>
+            <ArchiveRestore className="w-3.5 h-3.5" />
+            <span>Unarchive</span>
+          </>
+        ) : (
+          <>
+            <Archive className="w-3.5 h-3.5" />
+            <span>Archive</span>
           </>
         )}
       </button>
@@ -80,6 +98,7 @@ function App() {
   const [markdownCopied, setMarkdownCopied] = useState(false);
   const [sessionTokens, setSessionTokens] = useState<Record<string, SessionTokens>>({});
   const currentMessagesRef = useRef<ConversationMessage[]>([]);
+  const [showArchived, setShowArchived] = useState(false);
 
   const handleCopyResumeCommand = useCallback(
     (sessionId: string, projectPath: string) => {
@@ -138,11 +157,26 @@ function App() {
     });
   }, []);
 
+  const handleArchiveToggle = useCallback(
+    (sessionId: string, archive: boolean) => {
+      const method = archive ? "POST" : "DELETE";
+      fetch(`/api/sessions/${sessionId}/archive`, { method }).then(() => {
+        setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+        setSelectedSession((prev) => (prev === sessionId ? null : prev));
+      });
+    },
+    [],
+  );
+
   const handleSessionsError = useCallback(() => {
     setLoading(false);
   }, []);
 
-  useEventSource("/api/sessions/stream", {
+  const streamUrl = showArchived
+    ? "/api/sessions/stream?archived=true"
+    : "/api/sessions/stream";
+
+  useEventSource(streamUrl, {
     events: [
       { eventName: "sessions", onMessage: handleSessionsFull },
       { eventName: "sessionsUpdate", onMessage: handleSessionsUpdate },
@@ -200,6 +234,15 @@ function App() {
                 })}
               </select>
             </label>
+            <label className="flex items-center gap-2 px-5 pb-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showArchived}
+                onChange={(e) => setShowArchived(e.target.checked)}
+                className="accent-cyan-600"
+              />
+              <span className="text-[11px] text-zinc-500">Show archived</span>
+            </label>
           </div>
           <SessionList
             sessions={filteredSessions}
@@ -230,6 +273,7 @@ function App() {
               markdownCopied={markdownCopied}
               onCopyResumeCommand={handleCopyResumeCommand}
               onCopyMarkdown={handleCopyMarkdown}
+              onArchiveToggle={handleArchiveToggle}
             />
           )}
         </div>

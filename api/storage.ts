@@ -1,4 +1,4 @@
-import { readdir, readFile, stat, open } from "fs/promises";
+import { readdir, readFile, writeFile, stat, open } from "fs/promises";
 import { join, basename } from "path";
 import { homedir } from "os";
 import { createInterface } from "readline";
@@ -17,6 +17,7 @@ export interface Session {
   firstTimestamp?: number;
   project: string;
   projectName: string;
+  archived?: boolean;
 }
 
 export interface ConversationMessage {
@@ -88,6 +89,44 @@ const HISTORY_CACHE_TTL_MS = 5000;
 const pendingRequests = new Map<string, Promise<unknown>>();
 const tokenCache = new Map<string, { tokens: SessionTokens; size: number; mtime: number }>();
 const firstTimestampCache = new Map<string, number>();
+const archivedSessions = new Set<string>();
+
+function getArchivedPath(): string {
+  return join(claudeDir, "claude-run-archived.json");
+}
+
+async function loadArchivedSessions(): Promise<void> {
+  try {
+    const content = await readFile(getArchivedPath(), "utf-8");
+    const ids: string[] = JSON.parse(content);
+    archivedSessions.clear();
+    for (const id of ids) archivedSessions.add(id);
+  } catch {
+    // File doesn't exist yet
+  }
+}
+
+async function saveArchivedSessions(): Promise<void> {
+  await writeFile(
+    getArchivedPath(),
+    JSON.stringify([...archivedSessions]),
+    "utf-8"
+  );
+}
+
+export async function archiveSession(sessionId: string): Promise<void> {
+  archivedSessions.add(sessionId);
+  await saveArchivedSessions();
+}
+
+export async function unarchiveSession(sessionId: string): Promise<void> {
+  archivedSessions.delete(sessionId);
+  await saveArchivedSessions();
+}
+
+export function isArchived(sessionId: string): boolean {
+  return archivedSessions.has(sessionId);
+}
 
 export function initStorage(dir?: string): void {
   claudeDir = dir ?? join(homedir(), ".claude");
@@ -289,15 +328,15 @@ async function getFirstTimestamp(sessionId: string): Promise<number | undefined>
 }
 
 export async function loadStorage(): Promise<void> {
-  await Promise.all([buildFileIndex(), loadHistoryCache()]);
+  await Promise.all([buildFileIndex(), loadHistoryCache(), loadArchivedSessions()]);
 }
 
 function isHistoryCacheStale(): boolean {
   return !historyCache || (Date.now() - historyCacheTime > HISTORY_CACHE_TTL_MS);
 }
 
-export async function getSessions(): Promise<Session[]> {
-  return dedupe("getSessions", async () => {
+export async function getSessions(includeArchived = false): Promise<Session[]> {
+  return dedupe(`getSessions:${includeArchived}`, async () => {
     const entries = isHistoryCacheStale() ? await loadHistoryCache() : historyCache!;
     const sessions: Session[] = [];
     const seenIds = new Set<string>();
@@ -313,6 +352,11 @@ export async function getSessions(): Promise<Session[]> {
         continue;
       }
 
+      const archived = archivedSessions.has(sessionId);
+      if (archived && !includeArchived) {
+        continue;
+      }
+
       seenIds.add(sessionId);
       sessions.push({
         id: sessionId,
@@ -320,6 +364,7 @@ export async function getSessions(): Promise<Session[]> {
         timestamp: entry.timestamp,
         project: entry.project,
         projectName: getProjectName(entry.project),
+        archived,
       });
     }
 
