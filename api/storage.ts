@@ -14,6 +14,7 @@ export interface Session {
   id: string;
   display: string;
   timestamp: number;
+  firstTimestamp?: number;
   project: string;
   projectName: string;
 }
@@ -72,6 +73,7 @@ let historyCacheTime = 0;
 const HISTORY_CACHE_TTL_MS = 5000;
 const pendingRequests = new Map<string, Promise<unknown>>();
 const tokenCache = new Map<string, { tokens: SessionTokens; size: number; mtime: number }>();
+const firstTimestampCache = new Map<string, number>();
 
 export function initStorage(dir?: string): void {
   claudeDir = dir ?? join(homedir(), ".claude");
@@ -249,6 +251,29 @@ async function findSessionFile(sessionId: string): Promise<string | null> {
   return null;
 }
 
+async function getFirstTimestamp(sessionId: string): Promise<number | undefined> {
+  if (firstTimestampCache.has(sessionId)) {
+    return firstTimestampCache.get(sessionId);
+  }
+  const filePath = fileIndex.get(sessionId);
+  if (!filePath) return undefined;
+  try {
+    const content = await readFile(filePath, "utf-8");
+    const firstNewline = content.indexOf("\n");
+    const firstLine = firstNewline > 0 ? content.slice(0, firstNewline) : content;
+    if (!firstLine.trim()) return undefined;
+    const msg: ConversationMessage = JSON.parse(firstLine);
+    if (msg.timestamp) {
+      const ts = new Date(msg.timestamp).getTime();
+      firstTimestampCache.set(sessionId, ts);
+      return ts;
+    }
+  } catch {
+    // ignore
+  }
+  return undefined;
+}
+
 export async function loadStorage(): Promise<void> {
   await Promise.all([buildFileIndex(), loadHistoryCache()]);
 }
@@ -283,6 +308,12 @@ export async function getSessions(): Promise<Session[]> {
         projectName: getProjectName(entry.project),
       });
     }
+
+    await Promise.all(
+      sessions.map(async (s) => {
+        s.firstTimestamp = await getFirstTimestamp(s.id);
+      })
+    );
 
     return sessions.sort((a, b) => b.timestamp - a.timestamp);
   });
