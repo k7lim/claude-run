@@ -14,6 +14,8 @@ import {
   getConversationStream,
   getSessionTokens,
   searchSessions,
+  archiveSession,
+  unarchiveSession,
   invalidateHistoryCache,
   invalidateTokenCache,
   addToFileIndex,
@@ -70,8 +72,21 @@ export function createServer(options: ServerOptions) {
   }
 
   app.get("/api/sessions", async (c) => {
-    const sessions = await getSessions();
+    const includeArchived = c.req.query("archived") === "true";
+    const sessions = await getSessions(includeArchived);
     return c.json(sessions);
+  });
+
+  app.post("/api/sessions/:id/archive", async (c) => {
+    const sessionId = c.req.param("id");
+    await archiveSession(sessionId);
+    return c.json({ ok: true });
+  });
+
+  app.delete("/api/sessions/:id/archive", async (c) => {
+    const sessionId = c.req.param("id");
+    await unarchiveSession(sessionId);
+    return c.json({ ok: true });
   });
 
   app.get("/api/projects", async (c) => {
@@ -86,6 +101,7 @@ export function createServer(options: ServerOptions) {
   });
 
   app.get("/api/sessions/stream", async (c) => {
+    const includeArchived = c.req.query("archived") === "true";
     return streamSSE(c, async (stream) => {
       let isConnected = true;
       const knownSessions = new Map<string, number>();
@@ -100,7 +116,7 @@ export function createServer(options: ServerOptions) {
           return;
         }
         try {
-          const sessions = await getSessions();
+          const sessions = await getSessions(includeArchived);
           const newOrUpdated = sessions.filter((s) => {
             const known = knownSessions.get(s.id);
             return known === undefined || known !== s.timestamp;
@@ -125,7 +141,7 @@ export function createServer(options: ServerOptions) {
       c.req.raw.signal.addEventListener("abort", cleanup);
 
       try {
-        const sessions = await getSessions();
+        const sessions = await getSessions(includeArchived);
         for (const s of sessions) {
           knownSessions.set(s.id, s.timestamp);
         }
