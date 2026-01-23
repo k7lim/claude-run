@@ -13,6 +13,7 @@ import {
   getConversation,
   getConversationStream,
   getSessionTokens,
+  searchSessions,
   invalidateHistoryCache,
   invalidateTokenCache,
   addToFileIndex,
@@ -76,6 +77,12 @@ export function createServer(options: ServerOptions) {
   app.get("/api/projects", async (c) => {
     const projects = await getProjects();
     return c.json(projects);
+  });
+
+  app.get("/api/search", async (c) => {
+    const query = c.req.query("q") || "";
+    const results = await searchSessions(query);
+    return c.json(results);
   });
 
   app.get("/api/sessions/stream", async (c) => {
