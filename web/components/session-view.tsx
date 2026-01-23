@@ -3,6 +3,24 @@ import type { ConversationMessage } from "@claude-run/api";
 import MessageBlock from "./message-block";
 import ScrollToBottomButton from "./scroll-to-bottom-button";
 
+function formatTimestamp(ts: string): string {
+  const date = new Date(ts);
+  const now = new Date();
+  const isToday =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  if (isToday) {
+    return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  }
+  return date.toLocaleDateString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 const MAX_RETRIES = 10;
 const BASE_RETRY_DELAY_MS = 1000;
 const MAX_RETRY_DELAY_MS = 30000;
@@ -10,10 +28,11 @@ const SCROLL_THRESHOLD_PX = 100;
 
 interface SessionViewProps {
   sessionId: string;
+  onMessagesChange?: (messages: ConversationMessage[]) => void;
 }
 
 function SessionView(props: SessionViewProps) {
-  const { sessionId } = props;
+  const { sessionId, onMessagesChange } = props;
 
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [loading, setLoading] = useState(true);
@@ -109,6 +128,10 @@ function SessionView(props: SessionViewProps) {
     }
   }, [messages, autoScroll, scrollToBottom]);
 
+  useEffect(() => {
+    onMessagesChange?.(messages);
+  }, [messages, onMessagesChange]);
+
   const handleScroll = () => {
     if (!containerRef.current || isScrollingProgrammaticallyRef.current) {
       return;
@@ -162,6 +185,15 @@ function SessionView(props: SessionViewProps) {
                 }
               >
                 <MessageBlock message={message} />
+                {message.timestamp && (
+                  <div
+                    className={`mt-0.5 text-[10px] text-zinc-500 ${
+                      message.type === "user" ? "text-right" : "text-left"
+                    }`}
+                  >
+                    {formatTimestamp(message.timestamp)}
+                  </div>
+                )}
               </div>
             ))}
           </div>
