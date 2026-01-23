@@ -1,5 +1,6 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import type { ConversationMessage } from "@claude-run/api";
+import { GitBranch } from "lucide-react";
 import MessageBlock from "./message-block";
 import ScrollToBottomButton from "./scroll-to-bottom-button";
 
@@ -19,6 +20,63 @@ function formatTimestamp(ts: string): string {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function buildBranch(
+  messages: ConversationMessage[],
+  branchChoices: Map<string, string>
+): ConversationMessage[] {
+  if (messages.length === 0) return [];
+
+  const childrenMap = new Map<string, ConversationMessage[]>();
+  const uuidMap = new Map<string, ConversationMessage>();
+  const roots: ConversationMessage[] = [];
+
+  for (const msg of messages) {
+    if (msg.uuid) uuidMap.set(msg.uuid, msg);
+    const parent = msg.parentUuid;
+    if (!parent) {
+      roots.push(msg);
+    } else {
+      const siblings = childrenMap.get(parent) || [];
+      siblings.push(msg);
+      childrenMap.set(parent, siblings);
+    }
+  }
+
+  if (roots.length === 0) return messages;
+
+  const chain: ConversationMessage[] = [];
+  let current: ConversationMessage | undefined = roots[0];
+
+  while (current) {
+    chain.push(current);
+    const children = current.uuid ? childrenMap.get(current.uuid) : undefined;
+    if (!children || children.length === 0) break;
+    const chosen = current.uuid && branchChoices.get(current.uuid);
+    current = chosen
+      ? children.find((c) => c.uuid === chosen) || children[children.length - 1]
+      : children[children.length - 1];
+  }
+
+  return chain;
+}
+
+function getForkPoints(
+  messages: ConversationMessage[]
+): Map<string, ConversationMessage[]> {
+  const childrenMap = new Map<string, ConversationMessage[]>();
+  for (const msg of messages) {
+    if (!msg.parentUuid) continue;
+    const siblings = childrenMap.get(msg.parentUuid) || [];
+    siblings.push(msg);
+    childrenMap.set(msg.parentUuid, siblings);
+  }
+  const forks = new Map<string, ConversationMessage[]>();
+  for (const [parentUuid, children] of childrenMap) {
+    if (children.length > 1) forks.set(parentUuid, children);
+  }
+  return forks;
 }
 
 const MAX_RETRIES = 10;
@@ -142,9 +200,17 @@ function SessionView(props: SessionViewProps) {
     setAutoScroll(isAtBottom);
   };
 
+  const [branchChoices, setBranchChoices] = useState<Map<string, string>>(new Map());
+
   const summary = messages.find((m) => m.type === "summary");
-  const conversationMessages = messages.filter(
+  const allConversation = messages.filter(
     (m) => m.type === "user" || m.type === "assistant"
+  );
+
+  const forkPoints = useMemo(() => getForkPoints(allConversation), [allConversation]);
+  const conversationMessages = useMemo(
+    () => buildBranch(allConversation, branchChoices),
+    [allConversation, branchChoices]
   );
 
   if (loading) {
@@ -175,27 +241,61 @@ function SessionView(props: SessionViewProps) {
           )}
 
           <div className="flex flex-col gap-2">
-            {conversationMessages.map((message, index) => (
-              <div
-                key={message.uuid || index}
-                ref={
-                  index === conversationMessages.length - 1
-                    ? lastMessageRef
-                    : undefined
-                }
-              >
-                <MessageBlock message={message} />
-                {message.timestamp && (
-                  <div
-                    className={`mt-0.5 text-[10px] text-zinc-500 ${
-                      message.type === "user" ? "text-right" : "text-left"
-                    }`}
-                  >
-                    {formatTimestamp(message.timestamp)}
-                  </div>
-                )}
-              </div>
-            ))}
+            {conversationMessages.map((message, index) => {
+              const branches = message.uuid ? forkPoints.get(message.uuid) : undefined;
+              const currentChild = conversationMessages[index + 1];
+              return (
+                <div
+                  key={message.uuid || index}
+                  ref={
+                    index === conversationMessages.length - 1
+                      ? lastMessageRef
+                      : undefined
+                  }
+                >
+                  <MessageBlock message={message} />
+                  {message.timestamp && (
+                    <div
+                      className={`mt-0.5 text-[10px] text-zinc-500 ${
+                        message.type === "user" ? "text-right" : "text-left"
+                      }`}
+                    >
+                      {formatTimestamp(message.timestamp)}
+                    </div>
+                  )}
+                  {branches && branches.length > 1 && (
+                    <div className="flex items-center gap-1.5 mt-1 mb-1 ml-1">
+                      <GitBranch size={11} className="text-amber-500/70" />
+                      <span className="text-[10px] text-zinc-500">
+                        {branches.length} branches
+                      </span>
+                      <div className="flex gap-0.5 ml-1">
+                        {branches.map((b, i) => (
+                          <button
+                            key={b.uuid || i}
+                            onClick={() => {
+                              if (!message.uuid || !b.uuid) return;
+                              setBranchChoices((prev) => {
+                                const next = new Map(prev);
+                                next.set(message.uuid!, b.uuid!);
+                                return next;
+                              });
+                            }}
+                            className={`px-1.5 py-0.5 text-[10px] rounded transition-colors ${
+                              currentChild?.uuid === b.uuid
+                                ? "bg-amber-500/20 text-amber-300"
+                                : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
+                            }`}
+                          >
+                            {i + 1}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
