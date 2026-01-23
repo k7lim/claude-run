@@ -106,8 +106,8 @@ function formatMessage(message: ConversationMessage): string | null {
   return `## ${role}\n\n${formattedContent}`;
 }
 
-export function conversationToMarkdown(messages: ConversationMessage[]): string {
-  const parts: string[] = ["# Conversation"];
+export function conversationToMarkdown(messages: ConversationMessage[], title?: string): string {
+  const parts: string[] = [title ? `# ${title}` : "# Conversation"];
 
   const conversationMessages = messages.filter(
     (m) => m.type === "user" || m.type === "assistant"

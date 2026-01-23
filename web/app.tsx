@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import type { Session, SessionTokens, ConversationMessage } from "@claude-run/api";
-import { PanelLeft, Copy, Check, FileText, Archive, ArchiveRestore } from "lucide-react";
+import { PanelLeft, Copy, Check, FileText, Archive, ArchiveRestore, Download } from "lucide-react";
 import { formatTime } from "./utils";
 import { conversationToMarkdown } from "./utils/conversation-to-markdown";
 import SessionList from "./components/session-list";
@@ -99,6 +99,8 @@ function App() {
   const [sessionTokens, setSessionTokens] = useState<Record<string, SessionTokens>>({});
   const currentMessagesRef = useRef<ConversationMessage[]>([]);
   const [showArchived, setShowArchived] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [exporting, setExporting] = useState(false);
 
   const handleCopyResumeCommand = useCallback(
     (sessionId: string, projectPath: string) => {
@@ -122,6 +124,43 @@ function App() {
   const handleMessagesChange = useCallback((messages: ConversationMessage[]) => {
     currentMessagesRef.current = messages;
   }, []);
+
+  const handleToggleSelect = useCallback((sessionId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(sessionId)) {
+        next.delete(sessionId);
+      } else {
+        next.add(sessionId);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleBatchExport = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    setExporting(true);
+    try {
+      const parts: string[] = [];
+      for (const id of selectedIds) {
+        const res = await fetch(`/api/conversation/${id}`);
+        const messages: ConversationMessage[] = await res.json();
+        const session = sessions.find((s) => s.id === id);
+        const title = session?.display || id;
+        parts.push(conversationToMarkdown(messages, title));
+      }
+      const blob = new Blob([parts.join("\n---\n\n")], { type: "text/markdown" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `claude-sessions-${new Date().toISOString().slice(0, 10)}.md`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setSelectedIds(new Set());
+    } finally {
+      setExporting(false);
+    }
+  }, [selectedIds, sessions]);
 
   const selectedSessionData = useMemo(() => {
     if (!selectedSession) {
@@ -248,10 +287,26 @@ function App() {
             sessions={filteredSessions}
             selectedSession={selectedSession}
             onSelectSession={handleSelectSession}
+            selectedIds={selectedIds}
+            onToggleSelect={handleToggleSelect}
             loading={loading}
             tokens={sessionTokens}
             onVisibleSessionsChange={handleVisibleSessionsChange}
           />
+          {selectedIds.size > 0 && (
+            <div className="px-3 py-2 border-t border-zinc-800/60">
+              <button
+                onClick={handleBatchExport}
+                disabled={exporting}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs text-zinc-200 bg-cyan-700/60 hover:bg-cyan-700/80 rounded transition-colors disabled:opacity-50"
+              >
+                <Download className="w-3.5 h-3.5" />
+                {exporting
+                  ? "Exporting..."
+                  : `Export ${selectedIds.size} session${selectedIds.size > 1 ? "s" : ""}`}
+              </button>
+            </div>
+          )}
         </aside>
       )}
 
