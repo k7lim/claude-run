@@ -37,3 +37,19 @@ npm-debug.log*
 package-lock.json
 yarn.lock
 bun.lockb
+
+# Local tooling
+.beads/*.db
+.beads/daemon.log
+.beads/daemon.lock
+.beads/last-touched
+.beads/sync-state.json
+.beads/.local_version
+.pnpm-store/
+PROMPT.md
+push-and-pr.sh
+test-branches.sh
+
+# Worktrees for multi-branch testing
+.worktrees/
+stop-branches.sh
